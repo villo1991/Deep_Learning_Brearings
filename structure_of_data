@@ -16,7 +16,7 @@ class 1 = 1 inner damage
 class 2 = 2 outer damage
 class 3 = 3 mix damage
 Train:
-2080 = [400 720 800 160] (position of the value declare the belong class)
+2080 = [400 720 800 160]  (position of the value declare the belong class)
 Test:
 240 = [ 80 80 80 80 ]
 
