@@ -1,6 +1,16 @@
 Dataset raw:
 Link: https://doi.org/10.5281/zenodo.15845309
-Raw dataset has 2400 samples and each recorder has a duration of +-4s. Type of data register are:
+Raw dataset has 2400 samples and each recorder has a duration of +-4s. 
+Samples are grouped into folders, each containing 80 samples split into 4 experimental conditions:
+
+| ID          | Rotational Speed (RPM) | Load Torque (Nm) | Radial Force (N) | Technical Description            |
+| ----------- | ---------------------- | ---------------- | ---------------- | -------------------------------- |
+| N15_M07_F10 | 1500                   | 0.7              | 1000             | Nominal condition at high load   |
+| N09_M07_F10 | 900                    | 0.7              | 1000             | Reduced speed, constant torque   |
+| N15_M01_F10 | 1500                   | 0.1              | 1000             | High speed, minimum torque load  |
+| N15_M07_F04 | 1500                   | 0.7              | 400              | High speed, reduced radial force |
+
+
 Recording frequency (64kHz)
 current_phase1 (64 khz)
 current_phase2 (64 khz)
@@ -11,35 +21,97 @@ Oil Temperature (1 khz)
 
 Configuration dataset raw for classification:
 Classes and distribution:
-class 0 = 0 no damage
-class 1 = 1 inner damage
-class 2 = 2 outer damage
-class 3 = 3 mix damage
+class  0 → no damage    | N15_M07_F10, N15_M01_F10, N15_M07_F04
+class  1 → no damage    | N09_M07_F10
+class  2 → inner damage | N15_M07_F10, N15_M01_F10, N15_M07_F04
+class  3 → inner damage | N09_M07_F10
+class  4 → outer damage | N15_M07_F10, N15_M01_F10, N15_M07_F04
+class  5 → outer damage | N09_M07_F10
+class  6 → mix damage   | N15_M07_F10, N15_M01_F10, N15_M07_F04
+class  7 → mix damage   | N09_M07_F10
+
 Train:
-2080 = [400 720 800 160]  (position of the value declare the belong class)
+2080 = [300 100 540 180 600 200 120 40 ]  (position of the value declare the belong class)
 Test:
-240 = [ 80 80 80 80 ]
+240 = [ 60 20 60 20 60 20 60 20 ]
 
 Note:
-Record time isn't exactly 4s in 64 kHz, because the shorter recorder has 250604 values (3.92s) instead the
-higher has 291847 values (4.56s).
+Record time isn't exactly 4s in 64 kHz, because the shorter sample has 250604 values (3.92s) and higher 
+sample has 291847 values (4.56s).
 
 I merged four folders into the Test Set, one for each type of damage. The Test Set contains a total of 240 tracks:
 80 tracks for each damage type, with 20 tracks for each experimental configuration.
-configuration of experiment.
-Conf 0 : 1500 rpm, load torque 0.7, radial force 1000 N
-Conf 1 : 900 rpm, load torque 0.7, radial force 1000 N
-Conf 2 : 1500 rpm, load torque 0.1, radial force 1000 N
-Conf 3 : 1500 rpm, load torque 0.7, radial force 400 N
+
+I couldn’t perform cross-validation due to data leakage constraints because I am using an RTX 4060 laptop with 8GB 
+of VRAM. Running the model six times on the augmented training dataset requires 44 minutes. However, I was still able
+to identify the best model to extract and generalize the underlying physical factors.
+
 
 -------------------------------------------------------------------------------------------------------
-Data augmentation
+Slpit metod and Data augmentation
 -------------------------------------------------------------------------------------------------------
-First, each track was split into 8 chunks of 31325 values. Then, in a separate step, data augmentation was applied
-to balance the dataset: Class 0 was increased from 3200 to 6400 samples, and Class 3 from 1280 to 3360 samples.
 
-Train augmented: [6400. 5760. 6400. 3360.]
-Train only split: [3200. 5760. 6400. 1280.]
+Split method
+
+Each raw signal was clipped to 250,600 samples and then divided into different chunk sizes:
+
+    1. 100 chunks of 2,506 samples
+    2. 50 chunks of 5,012 samples
+    3. 25 chunks of 10,024 samples
+
+1D model considerations
+
+1) 2,506-sample chunks
+
+    This configuration did not produce satisfactory results. Most likely, each chunk contains too little information,
+    and the acoustic patterns become too similar across samples at this temporal resolution.
+    
+    The best model under this setup also performed poorly during training:
+    
+    → Test set accuracy: 0.4383
+    → MCC: 0.2686
+    
+    STD = [30000 10000 54000 18000 60000 20000 12000 4000]
+    AUG = [60000 20000 60000 36000 60000 40000 24000 10000]
+    
+    The concept is coherent: if the window is shorter than a physically meaningful event (e.g., a shaft rotation),
+    the model cannot reliably capture discriminative patterns.
+
+2) 5,012-sample chunks
+
+    This configuration produced significantly better results. The improvement is consistent with the
+    physical interpretation of the signal.
+    
+    Rotational speed:
+    900 RPM / 60 s = 15 rotations per second
+    1500 RPM / 60 s = 25 rotations per second
+    
+    For 900 RPM:
+    1 / 15 ≈ 0.066 s per rotation
+    
+    Sampling frequency:
+    1 / 64,000 Hz = 1.5625 × 10⁻⁵ s per sample
+    
+    Number of samples per rotation:
+    0.066 / (1.5625 × 10⁻⁵) ≈ 4,224 samples
+    
+    This means that ~4,224 samples are required to capture one full rotation at 900 RPM. A chunk size of
+    5,012 samples therefore covers approximately one complete mechanical cycle, allowing the network to 
+    learn rotation-related fault patterns.
+    
+    STD = [15000 5000 27000 9000 30000 10000 6000 2000]
+    AUG = [30000 30000 30000 30000 30000 30000 30000 30000]
+    
+
+ 3) 10,024-sample chunks
+
+    This configuration showed high variability in both accuracy and MCC. A possible explanation is that 
+    larger windows introduce additional variability and noise, mixing multiple rotations and potentially
+    different transient behaviors within the same chunk.
+    
+    STD = [7500 2500 13500 4500 15000 5000 3000 10000]
+    AUG = [15000 15000 15000 15000 15000 15000 15000 15000]
+    
 
 -------------------------------------------------------------------------------------------------------
 Data preprocess
@@ -52,52 +124,3 @@ For the 1D model I preprocess input vector with first-order temporal derivative 
 → Δt = 1 / fs
                         ∂x[n,k]/∂t ≈ (x[n,k+1] − x[n,k−1]) / 2Δt
 
--------------------------------------------------------------------------------------------------------
-Y dataset
--------------------------------------------------------------------------------------------------------
-
-name: Y_test_raw_0.5.npy
-type = np.array(2560;1)
-abs_path= "..../Y_test_raw_0.5.npy"
-class and distribution: [640. 640. 640. 640.]
-
-name: Y_test_raw_0.5_ohe.npy
-type = np.array(2560;4), because contain one hot encoding for 4 classes
-abs_path= "....Y_test_raw_0.5_ohe.npy"
-class and distribution: [640. 640. 640. 640.]
-
-name: Y_train_raw_0.5.npy
-type = np.array(16640,1)
-abs_path= "...Y_train_raw_0.5.npy"
-class and distribution: [3200. 5760. 6400. 1280.]
-
-name: Y_train_raw_0.5_ohe.npy
-type = np.array(16640,4) because contain one hot encoding for 4 classes
-abs_path= "...Y_train_raw_0.5.npy"
-class and distribution: [3200. 5760. 6400. 1280.]
-
-name: Y_train_raw_aug_0.5.npy
-type = np.array(21920,1)
-abs_path= "...Y_train_raw_0.5.npy"
-class and distribution: [6400. 5760. 6400. 3360.]
-
-name: Y_train_raw_aug_0.5_ohe.npy
-type = np.array(21920,4) because contain one hot encoding for 4 classes
-abs_path= "...Y_train_raw_0.5.npy"
-class and distribution: [6400. 5760. 6400. 3360.]
-
--------------------------------------------------------------------------------------------------------
-X dataset
--------------------------------------------------------------------------------------------------------
-
-name: X_train_processed_aug.npy
-type: array(21920, 31325)
-abs_path: "..../X_train_processed_aug.npy"
-note: raw value are preprocess with first-order temporal derivative using central differences and the secondo step
-      standardization with Scaler fit on raw data
-
-name: X_train_processed.npy
-type: array(16640, 31325)
-abs_path: "..../X_train_processed.npy"
-note: raw value are preprocess with first-order temporal derivative using central differences and the secondo step
-      standardization with Scaler fit on raw data
